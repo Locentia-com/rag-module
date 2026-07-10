@@ -1,0 +1,14 @@
+# Lokaler Default-Stack (läuft komplett ohne externe API-Keys)
+pydantic>=2.7
+pydantic-settings>=2.2
+qdrant-client>=1.12
+fastembed>=0.7
+httpx>=0.27
+pdfplumber>=0.11
+
+# --- Optionale Andockstellen für externe APIs ---
+# cohere>=5.13        # RAG_DENSE_BACKEND=cohere / RAG_RERANK_BACKEND=cohere
+# anthropic>=0.40     # RAG_EXPANSION_BACKEND=anthropic
+
+# --- Optional: beste lokale Qualität (inkl. Torch, große Installation) ---
+# FlagEmbedding>=1.2.10   # RAG_DENSE_BACKEND=bge_m3 / RAG_RERANK_BACKEND=bge

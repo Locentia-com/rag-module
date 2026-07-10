@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+*.egg
+
+# Virtuelle Umgebungen
+.venv/
+venv/
+env/
+ENV/
+
+# Secrets / lokale Konfiguration (Beispiel .env.example bleibt versioniert)
+.env
+.env.*
+!.env.example
+
+# Tooling-Caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Modell-/Daten-Caches
+.cache/
+*.onnx
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+
+# Lokale Qdrant-Daten
+qdrant_storage/
