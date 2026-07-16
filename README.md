@@ -21,7 +21,7 @@ Dense-Embeddings, BM25 und Cross-Encoder-Reranking laufen lokal via ONNX
                          └─────────┬──────────────────────┬────────────┘
               ingest_document(...) │                      │ retrieve(...)
                                    ▼                      ▼
-        ┌──────────────────────────────────┐   ┌─────────────────────────────────┐
+        ┌──────────────────────────────────┐   ┌──────────────────────────────────┐
         │        ChunkingEngine            │   │       RetrievalPipeline          │
         │        (chunking.py)             │   │       (retrieval.py)             │
         │  Markdown │ Legal │ Code │ JSON  │   │ 1. Query Expansion (Ollama/      │
@@ -31,7 +31,7 @@ Dense-Embeddings, BM25 und Cross-Encoder-Reranking laufen lokal via ONNX
         └──────────┬───────────────────────┘   │ 3. Reciprocal Rank Fusion        │
                    │ Chunks                    │ 4. Re-Ranking (Top-50 → Top-N):  │
                    ▼                           │    fastembed │ BGE │ Cohere      │
-        ┌──────────────────────────────────┐   └───────────┬─────────────────────┘
+        ┌──────────────────────────────────┐   └───────────┬──────────────────────┘
         │  BaseDenseEmbedder /             │               │
         │  BaseSparseEmbedder              │               │
         │  (embeddings.py)                 │               │
