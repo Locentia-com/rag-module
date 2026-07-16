@@ -23,7 +23,7 @@ import logging
 import re
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from .chunking import ChunkingEngine
 from .config import RAGSettings
@@ -69,13 +69,13 @@ class AdvancedRAGModule:
     def __init__(
         self,
         *,
-        settings: Optional[RAGSettings] = None,
-        vector_store: Optional[BaseVectorStore] = None,
-        dense_embedder: Optional[BaseDenseEmbedder] = None,
-        sparse_embedder: Optional[BaseSparseEmbedder] = None,
-        chunking_engine: Optional[ChunkingEngine] = None,
-        query_expander: Optional[QueryExpander] = None,
-        reranker: Optional[BaseReranker] = None,
+        settings: RAGSettings | None = None,
+        vector_store: BaseVectorStore | None = None,
+        dense_embedder: BaseDenseEmbedder | None = None,
+        sparse_embedder: BaseSparseEmbedder | None = None,
+        chunking_engine: ChunkingEngine | None = None,
+        query_expander: QueryExpander | None = None,
+        reranker: BaseReranker | None = None,
     ) -> None:
         self._settings = settings or RAGSettings()
         self._store = vector_store or self._build_vector_store(self._settings)
@@ -119,7 +119,7 @@ class AdvancedRAGModule:
     # ------------------------------------------------------------------
 
     @classmethod
-    def from_settings(cls, settings: RAGSettings) -> "AdvancedRAGModule":
+    def from_settings(cls, settings: RAGSettings) -> AdvancedRAGModule:
         """Bequemer Konstruktor: baut alle Komponenten aus den Settings."""
         return cls(settings=settings)
 
@@ -139,13 +139,13 @@ class AdvancedRAGModule:
     @staticmethod
     def _build_embedders(
         settings: RAGSettings, *, need_dense: bool, need_sparse: bool
-    ) -> tuple[Optional[BaseDenseEmbedder], Optional[BaseSparseEmbedder]]:
-        dense: Optional[BaseDenseEmbedder] = None
-        sparse: Optional[BaseSparseEmbedder] = None
+    ) -> tuple[BaseDenseEmbedder | None, BaseSparseEmbedder | None]:
+        dense: BaseDenseEmbedder | None = None
+        sparse: BaseSparseEmbedder | None = None
 
         # Ein geteilter BGE-M3-Kern, falls beide Seiten ihn nutzen sollen –
         # das Modell wird dann nur einmal geladen.
-        shared_bge: Optional[BGEM3Embedder] = None
+        shared_bge: BGEM3Embedder | None = None
         if (need_dense and settings.dense_backend == "bge_m3") or (
             need_sparse and settings.sparse_backend == "bge_m3"
         ):
@@ -187,7 +187,7 @@ class AdvancedRAGModule:
         return dense, sparse
 
     @staticmethod
-    def _build_reranker(settings: RAGSettings) -> Optional[BaseReranker]:
+    def _build_reranker(settings: RAGSettings) -> BaseReranker | None:
         if settings.rerank_backend == "none":
             logger.info(
                 "Re-Ranking ist deaktiviert (rerank_backend='none') – Ergebnisse "
@@ -213,7 +213,7 @@ class AdvancedRAGModule:
         return FastEmbedReranker(model_name=settings.fastembed_rerank_model)
 
     @staticmethod
-    def _build_query_expander(settings: RAGSettings) -> Optional[QueryExpander]:
+    def _build_query_expander(settings: RAGSettings) -> QueryExpander | None:
         if settings.expansion_backend == "none":
             return None
         if settings.expansion_backend == "ollama":
@@ -259,7 +259,7 @@ class AdvancedRAGModule:
         if self._sparse is not None:
             await self._sparse.close()
 
-    async def __aenter__(self) -> "AdvancedRAGModule":
+    async def __aenter__(self) -> AdvancedRAGModule:
         await self._ensure_initialized()
         return self
 
@@ -271,7 +271,7 @@ class AdvancedRAGModule:
     # ------------------------------------------------------------------
 
     async def ingest_document(
-        self, file_path: str, document_type: str, metadata: Dict[str, Any]
+        self, file_path: str, document_type: str, metadata: dict[str, Any]
     ) -> str:
         """Ingestiert ein Dokument als NEUE Version (alte Stände bleiben erhalten).
 
@@ -300,18 +300,74 @@ class AdvancedRAGModule:
         document_id = str(metadata.pop("document_id", "") or "").strip() or _derive_document_id(
             file_path
         )
-        try:
-            json.dumps(metadata)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "metadata muss JSON-serialisierbar sein (nur str/int/float/bool/"
-                f"list/dict/None): {exc}"
-            ) from exc
+        _validate_metadata_serializable(metadata)
 
-        # 1) Layout-bewusstes Chunking (CPU-Arbeit im Worker-Thread).
+        # Layout-bewusstes Chunking (CPU-Arbeit im Worker-Thread).
         chunks = await self._chunking.chunk_file(file_path, dtype, metadata)
 
-        # 2) Dense- und Sparse-Embeddings parallel erzeugen.
+        return await self._index_chunks_as_new_version(
+            chunks=chunks,
+            document_id=document_id,
+            document_type=dtype,
+            metadata=metadata,
+            source=Path(file_path).name,
+        )
+
+    async def ingest_text(
+        self,
+        content: str,
+        document_type: str,
+        metadata: dict[str, Any],
+        source_name: str = "",
+    ) -> str:
+        """Ingestiert bereits vorliegenden Text (ohne Datei) als NEUE Version.
+
+        Gleicher Ablauf wie :meth:`ingest_document`, nur ohne Datei-Loading;
+        ``pdf`` ist ausgenommen (binäres Format).
+
+        Versionierung: ``metadata["document_id"]`` steuert sie wie gehabt.
+        Fehlt sie, wird die ID aus ``source_name`` abgeleitet; fehlt auch der,
+        erhält der Text eine zufällige ID — dann gibt es KEINE Versionierung
+        über mehrere Ingests hinweg.
+        """
+        if not content or not content.strip():
+            raise ValueError("content darf nicht leer sein.")
+        await self._ensure_initialized()
+
+        metadata = dict(metadata or {})
+        dtype = DocumentType.from_raw(document_type)
+        if dtype is DocumentType.PDF:
+            raise ValueError(
+                "PDF kann nur über ingest_document(file_path=...) ingestiert werden."
+            )
+        document_id = str(metadata.pop("document_id", "") or "").strip()
+        if not document_id:
+            document_id = (
+                _derive_document_id(source_name) if source_name.strip() else uuid.uuid4().hex
+            )
+        _validate_metadata_serializable(metadata)
+
+        chunks = await self._chunking.chunk_text(content, dtype, source_name=source_name)
+
+        return await self._index_chunks_as_new_version(
+            chunks=chunks,
+            document_id=document_id,
+            document_type=dtype,
+            metadata=metadata,
+            source=source_name or "inline",
+        )
+
+    async def _index_chunks_as_new_version(
+        self,
+        *,
+        chunks: list[Chunk],
+        document_id: str,
+        document_type: DocumentType,
+        metadata: dict[str, Any],
+        source: str,
+    ) -> str:
+        """Embeddet Chunks und indiziert sie als neue Dokumentversion."""
+        # Dense- und Sparse-Embeddings parallel erzeugen.
         texts = [chunk.content for chunk in chunks]
         if self._sparse is not None:
             dense_vectors, sparse_vectors = await asyncio.gather(
@@ -327,7 +383,7 @@ class AdvancedRAGModule:
                 f"({len(dense_vectors)}/{len(sparse_vectors)} vs. {len(chunks)})."
             )
 
-        # 3) Versionsübergang – pro Dokument serialisiert.
+        # Versionsübergang – pro Dokument serialisiert.
         async with self._document_lock(document_id):
             latest_version = await self._store.get_latest_version(document_id)
             new_version = (latest_version or 0) + 1
@@ -340,12 +396,12 @@ class AdvancedRAGModule:
                 dense_vectors=dense_vectors,
                 sparse_vectors=sparse_vectors,
                 document_id=document_id,
-                document_type=dtype,
+                document_type=document_type,
                 metadata=metadata,
                 version=new_version,
                 valid_from=timestamp,
                 valid_from_iso=iso,
-                source=Path(file_path).name,
+                source=source,
             )
             # Erst deaktivieren, dann schreiben: Es gibt nie zwei aktive Stände
             # gleichzeitig (Akkuratheit vor Verfügbarkeit; das Zeitfenster ohne
@@ -371,17 +427,17 @@ class AdvancedRAGModule:
     def _build_points(
         self,
         *,
-        chunks: List[Chunk],
-        dense_vectors: List[List[float]],
-        sparse_vectors: List[Any],
+        chunks: list[Chunk],
+        dense_vectors: list[list[float]],
+        sparse_vectors: list[Any],
         document_id: str,
         document_type: DocumentType,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         version: int,
         valid_from: float,
         valid_from_iso: str,
         source: str,
-    ) -> List[ChunkPoint]:
+    ) -> list[ChunkPoint]:
         # Deterministische Punkt-IDs: identischer (Dokument, Version, Sequenz)-Tripel
         # ergibt dieselbe ID – ein wiederholter Upsert derselben Version ist idempotent.
         id_map = {
@@ -392,9 +448,11 @@ class AdvancedRAGModule:
             )
             for chunk in chunks
         }
-        points: List[ChunkPoint] = []
-        for chunk, dense_vector, sparse_vector in zip(chunks, dense_vectors, sparse_vectors):
-            payload: Dict[str, Any] = {
+        points: list[ChunkPoint] = []
+        for chunk, dense_vector, sparse_vector in zip(
+            chunks, dense_vectors, sparse_vectors, strict=True
+        ):
+            payload: dict[str, Any] = {
                 "document_id": document_id,
                 "document_type": document_type.value,
                 "source": source,
@@ -433,10 +491,10 @@ class AdvancedRAGModule:
         self,
         query: str,
         limit: int = 5,
-        temporal_filter: Optional[Dict[str, Any]] = None,
-        metadata_filter: Optional[Dict[str, Any]] = None,
+        temporal_filter: dict[str, Any] | None = None,
+        metadata_filter: dict[str, Any] | None = None,
         include_parent_context: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Advanced Retrieval: Expansion -> Hybrid-Suche -> RRF -> Re-Ranking.
 
         Args:
@@ -458,6 +516,16 @@ class AdvancedRAGModule:
             raise ValueError("query darf nicht leer sein.")
         if limit < 1:
             raise ValueError("limit muss >= 1 sein.")
+        missing_required_keys = [
+            key
+            for key in self._settings.required_filter_keys
+            if metadata_filter is None or metadata_filter.get(key) is None
+        ]
+        if missing_required_keys:
+            raise ValueError(
+                f"metadata_filter muss die Pflicht-Schlüssel {missing_required_keys} "
+                "enthalten (RAG_REQUIRED_FILTER_KEYS, z. B. für Mandanten-Isolation)."
+            )
         await self._ensure_initialized()
         temporal = TemporalFilter.from_value(temporal_filter)
         results = await self._pipeline.retrieve(
@@ -473,10 +541,20 @@ class AdvancedRAGModule:
     # Auskunft
     # ------------------------------------------------------------------
 
-    async def get_document_history(self, document_id: str) -> List[Dict[str, Any]]:
+    async def get_document_history(self, document_id: str) -> list[dict[str, Any]]:
         """Versionshistorie eines Dokuments (Version, Gültigkeitszeitraum, Chunk-Anzahl)."""
         await self._ensure_initialized()
         return await self._store.get_document_versions(document_id)
+
+
+def _validate_metadata_serializable(metadata: dict[str, Any]) -> None:
+    try:
+        json.dumps(metadata)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "metadata muss JSON-serialisierbar sein (nur str/int/float/bool/"
+            f"list/dict/None): {exc}"
+        ) from exc
 
 
 def _derive_document_id(file_path: str) -> str:

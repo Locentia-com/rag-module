@@ -5,8 +5,8 @@ from __future__ import annotations
 import enum
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 
 class DocumentType(str, enum.Enum):
@@ -22,7 +22,7 @@ class DocumentType(str, enum.Enum):
     TEXT = "text"
 
     @classmethod
-    def from_raw(cls, value: str) -> "DocumentType":
+    def from_raw(cls, value: str) -> DocumentType:
         """Normalisiert freie Typangaben (inkl. gängiger Aliase) auf einen DocumentType."""
         normalized = str(value).strip().lower().replace("-", "_")
         aliases = {
@@ -99,7 +99,7 @@ class Chunk:
     chunk_type: ChunkType
     chunk_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     role: ChunkRole = ChunkRole.STANDALONE
-    parent_id: Optional[str] = None
+    parent_id: str | None = None
     hierarchy: list[str] = field(default_factory=list)
     sequence: int = 0
     searchable: bool = True
@@ -127,18 +127,18 @@ class FusedCandidate:
     hit_count: int
 
 
-def _parse_datetime(value: Any) -> Optional[datetime]:
+def _parse_datetime(value: Any) -> datetime | None:
     """Akzeptiert datetime, Unix-Timestamp oder ISO-8601-String (auch mit 'Z')."""
     if value is None:
         return None
     if isinstance(value, datetime):
-        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(float(value), tz=timezone.utc)
+        return datetime.fromtimestamp(float(value), tz=UTC)
     if isinstance(value, str):
         raw = value.strip().replace("Z", "+00:00")
         parsed = datetime.fromisoformat(raw)
-        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+        return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
     raise ValueError(f"Nicht interpretierbarer Zeitstempel: {value!r}")
 
 
@@ -154,14 +154,14 @@ class TemporalFilter:
     - Default (leerer Filter): Nur der aktuell aktive Stand (``is_active=True``).
     """
 
-    as_of: Optional[datetime] = None
-    version: Optional[int] = None
+    as_of: datetime | None = None
+    version: int | None = None
     include_inactive: bool = False
 
     @classmethod
     def from_value(
-        cls, value: "TemporalFilter | dict[str, Any] | None"
-    ) -> Optional["TemporalFilter"]:
+        cls, value: TemporalFilter | dict[str, Any] | None
+    ) -> TemporalFilter | None:
         """Erzeugt einen TemporalFilter aus dict-Eingaben der Host-Applikation."""
         if value is None or isinstance(value, TemporalFilter):
             return value
@@ -198,12 +198,12 @@ class RetrievalResult:
     document_type: str
     version: int
     is_active: bool
-    valid_from: Optional[str]
-    valid_to: Optional[str]
+    valid_from: str | None
+    valid_to: str | None
     hierarchy: list[str]
-    parent_chunk_id: Optional[str]
-    parent_content: Optional[str]
-    source: Optional[str]
+    parent_chunk_id: str | None
+    parent_content: str | None
+    source: str | None
     metadata: dict[str, Any]
     extra: dict[str, Any]
 

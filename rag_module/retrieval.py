@@ -21,8 +21,9 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence
+from typing import Any
 
 from .embeddings import BaseDenseEmbedder, BaseSparseEmbedder
 from .exceptions import QueryExpansionError, RerankingError
@@ -458,9 +459,9 @@ class RetrievalPipeline:
         *,
         vector_store: BaseVectorStore,
         dense_embedder: BaseDenseEmbedder,
-        sparse_embedder: Optional[BaseSparseEmbedder],
-        query_expander: Optional[QueryExpander],
-        reranker: Optional[BaseReranker],
+        sparse_embedder: BaseSparseEmbedder | None,
+        query_expander: QueryExpander | None,
+        reranker: BaseReranker | None,
         per_query_limit: int = 50,
         candidate_pool_size: int = 50,
         rrf_k: int = 60,
@@ -481,8 +482,8 @@ class RetrievalPipeline:
         query: str,
         *,
         limit: int = 5,
-        temporal: Optional[TemporalFilter] = None,
-        metadata_filter: Optional[dict[str, Any]] = None,
+        temporal: TemporalFilter | None = None,
+        metadata_filter: dict[str, Any] | None = None,
         include_parent_context: bool = True,
     ) -> list[RetrievalResult]:
         # Schritt 1: Query Expansion (fail-open)
@@ -500,7 +501,7 @@ class RetrievalPipeline:
 
         # … und Dense- + Sparse-Suchen für alle Varianten parallel ausführen.
         search_tasks = []
-        for dense_vector, sparse_vector in zip(dense_vectors, sparse_vectors):
+        for dense_vector, sparse_vector in zip(dense_vectors, sparse_vectors, strict=True):
             search_tasks.append(
                 self._store.search_dense(
                     dense_vector,

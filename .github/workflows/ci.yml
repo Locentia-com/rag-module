@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install package with dev extras
+        run: pip install -e .[dev]
+
+      - name: Lint (ruff)
+        run: ruff check rag_module tests
+
+      - name: Tests (pytest, offline)
+        run: pytest -q
+
+      - name: Offline-E2E-Skript (Regression)
+        run: python tests/test_offline_e2e.py

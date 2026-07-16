@@ -15,8 +15,9 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Optional, Sequence, TypeVar
+from typing import Any, TypeVar
 
 from .exceptions import (
     ConfigurationError,
@@ -47,7 +48,7 @@ class ChunkPoint:
 
     point_id: str
     dense: list[float]
-    sparse: Optional[SparseVector]
+    sparse: SparseVector | None
     payload: dict[str, Any]
 
 
@@ -73,8 +74,8 @@ class BaseVectorStore(ABC):
         vector: Sequence[float],
         *,
         limit: int,
-        temporal: Optional[TemporalFilter] = None,
-        metadata_filter: Optional[dict[str, Any]] = None,
+        temporal: TemporalFilter | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         """Semantische Suche über den Dense-Vektor."""
 
@@ -84,8 +85,8 @@ class BaseVectorStore(ABC):
         vector: SparseVector,
         *,
         limit: int,
-        temporal: Optional[TemporalFilter] = None,
-        metadata_filter: Optional[dict[str, Any]] = None,
+        temporal: TemporalFilter | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         """Lexikalische Suche (BM25) über den Sparse-Vektor."""
 
@@ -94,7 +95,7 @@ class BaseVectorStore(ABC):
         """Lädt Punkte (z. B. Parent-Chunks) direkt über ihre IDs."""
 
     @abstractmethod
-    async def get_latest_version(self, document_id: str) -> Optional[int]:
+    async def get_latest_version(self, document_id: str) -> int | None:
         """Höchste existierende Version eines Dokuments (aktiv oder historisch)."""
 
     @abstractmethod
@@ -104,7 +105,7 @@ class BaseVectorStore(ABC):
         *,
         valid_to: float,
         valid_to_iso: str,
-        before_version: Optional[int] = None,
+        before_version: int | None = None,
     ) -> int:
         """Setzt alle aktiven Punkte eines Dokuments auf ``is_active=False``.
 
@@ -139,7 +140,7 @@ class QdrantVectorStore(BaseVectorStore):
         *,
         url: str,
         collection_name: str,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         timeout_s: float = 30.0,
         upsert_batch_size: int = 128,
         retry_attempts: int = 4,
@@ -282,12 +283,12 @@ class QdrantVectorStore(BaseVectorStore):
     def _build_filter(
         self,
         *,
-        temporal: Optional[TemporalFilter],
-        metadata_filter: Optional[dict[str, Any]],
-        document_id: Optional[str] = None,
+        temporal: TemporalFilter | None,
+        metadata_filter: dict[str, Any] | None,
+        document_id: str | None = None,
         only_searchable: bool = False,
-        only_active: Optional[bool] = None,
-    ) -> Optional[Any]:
+        only_active: bool | None = None,
+    ) -> Any | None:
         must: list[Any] = []
         if only_searchable:
             must.append(
@@ -370,8 +371,8 @@ class QdrantVectorStore(BaseVectorStore):
         vector: Sequence[float],
         *,
         limit: int,
-        temporal: Optional[TemporalFilter] = None,
-        metadata_filter: Optional[dict[str, Any]] = None,
+        temporal: TemporalFilter | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         query_filter = self._build_filter(
             temporal=temporal, metadata_filter=metadata_filter, only_searchable=True
@@ -397,8 +398,8 @@ class QdrantVectorStore(BaseVectorStore):
         vector: SparseVector,
         *,
         limit: int,
-        temporal: Optional[TemporalFilter] = None,
-        metadata_filter: Optional[dict[str, Any]] = None,
+        temporal: TemporalFilter | None = None,
+        metadata_filter: dict[str, Any] | None = None,
     ) -> list[ScoredChunk]:
         if vector.is_empty():
             return []
@@ -462,7 +463,7 @@ class QdrantVectorStore(BaseVectorStore):
             if offset is None:
                 return results
 
-    async def get_latest_version(self, document_id: str) -> Optional[int]:
+    async def get_latest_version(self, document_id: str) -> int | None:
         # Schneller Pfad: Der aktive Stand trägt (per Invariante) die höchste Version.
         active_filter = self._build_filter(
             temporal=TemporalFilter(include_inactive=True),
@@ -499,7 +500,7 @@ class QdrantVectorStore(BaseVectorStore):
         *,
         valid_to: float,
         valid_to_iso: str,
-        before_version: Optional[int] = None,
+        before_version: int | None = None,
     ) -> int:
         must: list[Any] = [
             qmodels.FieldCondition(

@@ -31,9 +31,34 @@ all = [
     "anthropic>=0.40",
     "pdfplumber>=0.11",
 ]
+# Entwicklung: Tests + Lint
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.6",
+]
 
 [tool.setuptools]
 packages = ["rag_module"]
 
 [tool.setuptools.package-data]
 rag_module = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# Die beiden Standalone-Skripte (test_offline_e2e.py, test_local_stack.py)
+# haben eigene main()-Runner und teils Modell-Downloads; pytest sammelt nur
+# die reine pytest-Suite ein.
+addopts = "--ignore=tests/test_offline_e2e.py --ignore=tests/test_local_stack.py"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = [
+    "E501",   # docstrings/Kommentare dürfen überlang sein; Code hält sich an 100
+    "UP042",  # (str, Enum) -> StrEnum ändert str()-Semantik; bewusst beim Bestand bleiben
+]

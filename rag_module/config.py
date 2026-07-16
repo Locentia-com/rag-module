@@ -8,7 +8,7 @@ reine Andockstellen, die über die ``*_backend``-Schalter aktiviert werden.
 
 from __future__ import annotations
 
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -24,7 +24,7 @@ class RAGSettings(BaseSettings):
 
     # --- Vektordatenbank (Qdrant) ---
     qdrant_url: str = "http://localhost:6333"
-    qdrant_api_key: Optional[str] = None
+    qdrant_api_key: str | None = None
     qdrant_timeout_s: float = 30.0
     collection_name: str = "rag_chunks"
     upsert_batch_size: int = Field(default=128, ge=1)
@@ -36,9 +36,9 @@ class RAGSettings(BaseSettings):
     dense_backend: Literal["fastembed", "bge_m3", "cohere"] = "fastembed"
     fastembed_dense_model: str = "intfloat/multilingual-e5-large"
     #: Nur nötig, wenn ein fastembed-Modell außerhalb der offiziellen Liste genutzt wird.
-    dense_dimension_override: Optional[int] = None
+    dense_dimension_override: int | None = None
     bge_m3_model: str = "BAAI/bge-m3"
-    cohere_api_key: Optional[str] = None
+    cohere_api_key: str | None = None
     cohere_embed_model: str = "embed-multilingual-v3.0"
     embed_batch_size: int = Field(default=96, ge=1, le=96)  # Cohere-API-Limit: 96 Texte/Call
     embed_concurrency: int = Field(default=4, ge=1)
@@ -68,7 +68,7 @@ class RAGSettings(BaseSettings):
     num_query_expansions: int = Field(default=3, ge=1, le=8)
     ollama_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.2"
-    anthropic_api_key: Optional[str] = None
+    anthropic_api_key: str | None = None
     anthropic_expansion_model: str = "claude-haiku-4-5-20251001"
 
     # --- Chunking ---
@@ -78,10 +78,23 @@ class RAGSettings(BaseSettings):
     min_chunk_tokens: int = Field(default=24, ge=1)
     table_hard_max_tokens: int = Field(default=4000, ge=256)  # Ab hier werden Tabellen zeilenweise geteilt
 
+    # --- Token-Zählung (steuert alle Chunk-Budgets) ---
+    # "heuristic": ~4 Zeichen/Token (Default; modellagnostisch, kein Download)
+    # "hf":        exakter HuggingFace-Tokenizer (empfohlen; benötigt HF-Hub
+    #              oder vorbefüllten Cache — fail-closed bei Ladefehler)
+    tokenizer_backend: Literal["heuristic", "hf"] = "heuristic"
+    #: Tokenizer-Modell für "hf"; Default: das Dense-Embedding-Modell, damit
+    #: Chunk-Budgets exakt dem Kontextfenster des Embedders entsprechen.
+    tokenizer_model: str | None = None
+
     # --- Retrieval-Pipeline ---
     per_query_limit: int = Field(default=50, ge=1)  # Treffer pro Einzelsuche (dense/sparse je Query-Variante)
     candidate_pool_size: int = Field(default=50, ge=1)  # Kandidaten, die an den Reranker gehen
     rrf_k: int = Field(default=60, ge=1)
+    #: Metadaten-Schlüssel, die bei JEDEM retrieve() im metadata_filter gesetzt
+    #: sein müssen (z. B. ["tenant"] für Mandanten-Isolation). Macht die
+    #: Filter-Konvention der Host-Applikation erzwingbar statt vertrauensbasiert.
+    required_filter_keys: list[str] = Field(default_factory=list)
 
     # --- Robustheit (Retry / Timeouts) ---
     retry_attempts: int = Field(default=4, ge=1)

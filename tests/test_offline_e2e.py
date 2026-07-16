@@ -19,8 +19,8 @@ import math
 import re
 import sys
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
@@ -29,9 +29,9 @@ from rag_module import (  # noqa: E402
     BaseDenseEmbedder,
     BaseReranker,
     BaseSparseEmbedder,
+    ChunkingEngine,
     ChunkRole,
     ChunkType,
-    ChunkingEngine,
     DocumentType,
     QdrantVectorStore,
     RAGSettings,

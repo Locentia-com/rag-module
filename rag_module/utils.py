@@ -1,4 +1,4 @@
-"""Querschnitts-Utilities: Retry-Logik mit Exponential Backoff, Token-Schätzung, Zeit-Helfer."""
+"""Querschnitts-Utilities: Retry-Logik mit Exponential Backoff, Token-Zählung, Zeit-Helfer."""
 
 from __future__ import annotations
 
@@ -6,8 +6,10 @@ import asyncio
 import importlib
 import logging
 import random
-from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, TypeVar
+from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any, TypeVar
 
 from .exceptions import ConfigurationError
 
@@ -20,14 +22,78 @@ T = TypeVar("T")
 CHARS_PER_TOKEN: int = 4
 
 
+# ---------------------------------------------------------------------------
+# Token-Zählung
+# ---------------------------------------------------------------------------
+
+
+class BaseTokenCounter(ABC):
+    """Interface für Token-Zählung; steuert alle Chunk-Budgets."""
+
+    @abstractmethod
+    def count(self, text: str) -> int:
+        """Anzahl der Tokens in ``text`` (mindestens 1)."""
+
+
+class HeuristicTokenCounter(BaseTokenCounter):
+    """Zeichenbasierte Näherung (~4 Zeichen/Token) — modellagnostisch, ohne Download."""
+
+    def count(self, text: str) -> int:
+        return max(1, (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN)
+
+
+class HFTokenCounter(BaseTokenCounter):
+    """Exakte Token-Zählung über einen HuggingFace-Tokenizer.
+
+    Nutzt das ``tokenizers``-Paket (transitiv über fastembed installiert).
+    Der Tokenizer wird beim Konstruieren geladen (HF-Hub bzw. lokaler Cache);
+    ``encode`` selbst ist thread-sicher (immutabler Rust-Core).
+    """
+
+    def __init__(self, model_name: str) -> None:
+        tokenizers = require_module(
+            "tokenizers",
+            hint="Installation: pip install tokenizers (kommt transitiv mit fastembed).",
+        )
+        try:
+            self._tokenizer = tokenizers.Tokenizer.from_pretrained(model_name)
+        except Exception as exc:
+            raise ConfigurationError(
+                f"HF-Tokenizer '{model_name}' konnte nicht geladen werden: {exc}. "
+                "Für air-gapped Betrieb den HF-Cache vorbefüllen oder "
+                "RAG_TOKENIZER_BACKEND=heuristic setzen."
+            ) from exc
+        self._model_name = model_name
+
+    def count(self, text: str) -> int:
+        if not text:
+            return 1
+        return max(1, len(self._tokenizer.encode(text, add_special_tokens=False).ids))
+
+
+#: Prozessweiter aktiver Token-Counter. Bewusst modul-global, weil die
+#: Chunking-Strategien Token-Budgets über Modul-Funktionen prüfen; die
+#: ChunkingEngine konfiguriert ihn aus den Settings. Bei mehreren
+#: AdvancedRAGModule-Instanzen mit unterschiedlichem tokenizer_backend im
+#: selben Prozess gewinnt die zuletzt konstruierte (dokumentierte Grenze).
+_active_token_counter: BaseTokenCounter = HeuristicTokenCounter()
+
+
+def configure_token_counter(counter: BaseTokenCounter) -> None:
+    """Setzt den prozessweiten Token-Counter (siehe Hinweis oben)."""
+    global _active_token_counter
+    _active_token_counter = counter
+    logger.info("Token-Counter konfiguriert: %s", type(counter).__name__)
+
+
 def estimate_tokens(text: str) -> int:
-    """Modellagnostische Token-Schätzung auf Zeichenbasis."""
-    return max(1, (len(text) + CHARS_PER_TOKEN - 1) // CHARS_PER_TOKEN)
+    """Token-Zählung über den aktiven Counter (Default: Zeichen-Heuristik)."""
+    return _active_token_counter.count(text)
 
 
 def utc_now() -> datetime:
     """Aktuelle Zeit als timezone-aware UTC-Datetime."""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def require_module(name: str, hint: str) -> Any:

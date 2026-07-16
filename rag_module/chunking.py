@@ -23,14 +23,21 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional, Sequence
+from typing import Any
 
 from .config import RAGSettings
 from .exceptions import ChunkingError, DocumentLoadError
 from .models import Chunk, ChunkRole, ChunkType, DocumentType
-from .utils import CHARS_PER_TOKEN, estimate_tokens
+from .utils import (
+    CHARS_PER_TOKEN,
+    HeuristicTokenCounter,
+    HFTokenCounter,
+    configure_token_counter,
+    estimate_tokens,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +304,7 @@ class _StructuredTextChunker(BaseChunker):
     # -- Hooks für Subklassen ------------------------------------------------
 
     @abstractmethod
-    def detect_heading(self, line: str) -> Optional[tuple[int, str]]:
+    def detect_heading(self, line: str) -> tuple[int, str] | None:
         """Gibt (Level, Titel) zurück, wenn die Zeile eine Überschrift ist."""
 
     def split_body(self, body: str) -> list[str]:
@@ -345,7 +352,7 @@ class _StructuredTextChunker(BaseChunker):
         if total_units == 0:
             return
 
-        parent: Optional[Chunk] = None
+        parent: Chunk | None = None
         if total_units > 1:
             parent_source = full if full else "\n\n".join(s[0] for s in specials)
             parent = Chunk(
@@ -398,7 +405,7 @@ class MarkdownChunker(_StructuredTextChunker):
     ATX-Stil (``#``) ist der De-facto-Standard.
     """
 
-    def detect_heading(self, line: str) -> Optional[tuple[int, str]]:
+    def detect_heading(self, line: str) -> tuple[int, str] | None:
         match = _MD_HEADING_RE.match(line)
         if not match:
             return None
@@ -433,7 +440,7 @@ class LegalChunker(_StructuredTextChunker):
 
     chunk_type_text = ChunkType.LEGAL_CLAUSE
 
-    def detect_heading(self, line: str) -> Optional[tuple[int, str]]:
+    def detect_heading(self, line: str) -> tuple[int, str] | None:
         stripped = line.strip()
         if not stripped or len(stripped) > 160:
             return None
@@ -504,7 +511,7 @@ class PlainTextChunker(_StructuredTextChunker):
     an natürlichen Grenzen segmentiert.
     """
 
-    def detect_heading(self, line: str) -> Optional[tuple[int, str]]:
+    def detect_heading(self, line: str) -> tuple[int, str] | None:
         stripped = line.strip()
         if not 4 <= len(stripped) <= 90 or stripped.endswith((".", ",", ";")):
             return None
@@ -710,7 +717,7 @@ class CodeChunker(BaseChunker):
 
         i = 0
         while i < len(lines):
-            name: Optional[str] = None
+            name: str | None = None
             matched = False
             for pattern in _BRACE_HEADER_PATTERNS:
                 match = pattern.match(lines[i])
@@ -774,7 +781,7 @@ class CodeChunker(BaseChunker):
         return chunks
 
     @staticmethod
-    def _find_block_end(lines: list[str], start: int) -> Optional[int]:
+    def _find_block_end(lines: list[str], start: int) -> int | None:
         """Findet die Zeile, in der der ``{...}``-Block einer Signatur schließt.
 
         String- und kommentar-bewusster Zustandsautomat; bricht ab, wenn in den
@@ -787,7 +794,7 @@ class CodeChunker(BaseChunker):
 
         depth = 0
         started = False
-        in_string: Optional[str] = None
+        in_string: str | None = None
         in_block_comment = False
         for idx in range(start, min(start + 4000, len(lines))):
             line = lines[idx]
@@ -863,7 +870,7 @@ class JSONChunker(BaseChunker):
             raise ChunkingError(f"JSON-Dokument '{source_name}' ergab keine Fragmente.")
 
         chunks: list[Chunk] = []
-        parent: Optional[Chunk] = None
+        parent: Chunk | None = None
         if len(fragments) > 1:
             label = f" '{source_name}'" if source_name else ""
             parent = Chunk(
@@ -1213,7 +1220,7 @@ class SQLDumpChunker(BaseChunker):
         i = 0
         length = len(text)
         in_single = in_double = in_backtick = False
-        dollar_tag: Optional[str] = None
+        dollar_tag: str | None = None
         while i < length:
             char = text[i]
             nxt = text[i + 1] if i + 1 < length else ""
@@ -1384,6 +1391,15 @@ class ChunkingEngine:
 
     def __init__(self, settings: RAGSettings) -> None:
         self._settings = settings
+        # Token-Zählung aus den Settings konfigurieren (prozessweit; siehe
+        # Hinweis an utils._active_token_counter). Fail-closed: Ein explizit
+        # konfigurierter HF-Tokenizer, der nicht lädt, ist ein Setup-Fehler.
+        if settings.tokenizer_backend == "hf":
+            configure_token_counter(
+                HFTokenCounter(settings.tokenizer_model or settings.fastembed_dense_model)
+            )
+        else:
+            configure_token_counter(HeuristicTokenCounter())
         common = dict(
             max_tokens=settings.chunk_max_tokens,
             overlap_tokens=settings.chunk_overlap_tokens,
@@ -1405,6 +1421,41 @@ class ChunkingEngine:
     ) -> list[Chunk]:
         """Asynchroner Einstiegspunkt; CPU-Arbeit läuft in einem Worker-Thread."""
         return await asyncio.to_thread(self.chunk_file_sync, file_path, document_type, metadata)
+
+    async def chunk_text(
+        self,
+        content: str,
+        document_type: DocumentType,
+        source_name: str = "",
+    ) -> list[Chunk]:
+        """Asynchroner Einstiegspunkt für bereits vorliegenden Text (ohne Datei)."""
+        return await asyncio.to_thread(
+            self.chunk_text_sync, content, document_type, source_name
+        )
+
+    def chunk_text_sync(
+        self,
+        content: str,
+        document_type: DocumentType,
+        source_name: str = "",
+    ) -> list[Chunk]:
+        """Chunkt bereits vorliegenden Text mit der Strategie des Dokumenttyps.
+
+        PDF ist ausgenommen (binäres Format, benötigt den Dateipfad).
+        """
+        if document_type is DocumentType.PDF:
+            raise ChunkingError(
+                "PDF-Inhalte können nicht als Text gechunkt werden — "
+                "chunk_file/ingest_document mit dem Dateipfad verwenden."
+            )
+        chunker = self._select_chunker(document_type)
+        chunks = chunker.chunk(content, source_name=source_name)
+        chunks = self._post_process(chunks)
+        if not chunks:
+            raise ChunkingError(
+                f"Aus '{source_name or 'inline-Text'}' konnten keine Chunks erzeugt werden."
+            )
+        return chunks
 
     def chunk_file_sync(
         self,
@@ -1448,15 +1499,15 @@ class ChunkingEngine:
                         extra={"page": table.page, "isolated_structure": True},
                     )
                 )
-        else:
-            content = self._read_text(path)
-            chunker = self._select_chunker(document_type)
-            chunks = chunker.chunk(content, source_name=path.name)
+            chunks = self._post_process(chunks)
+            if not chunks:
+                raise ChunkingError(
+                    f"Aus '{path.name}' konnten keine Chunks erzeugt werden."
+                )
+            return chunks
 
-        chunks = self._post_process(chunks)
-        if not chunks:
-            raise ChunkingError(f"Aus '{path.name}' konnten keine Chunks erzeugt werden.")
-        return chunks
+        content = self._read_text(path)
+        return self.chunk_text_sync(content, document_type, source_name=path.name)
 
     def _select_chunker(self, document_type: DocumentType) -> BaseChunker:
         mapping: dict[DocumentType, BaseChunker] = {

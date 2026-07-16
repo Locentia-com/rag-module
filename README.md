@@ -118,6 +118,23 @@ vorbefüllen. Darüber hinaus lässt sich jede Stufe per Dependency Injection du
 eigene Implementierungen ersetzen (`BaseDenseEmbedder`, `BaseSparseEmbedder`,
 `BaseReranker`, `BaseLLMClient`, `BaseVectorStore`).
 
+### Token-Zählung
+
+Chunk-Budgets werden per Default über eine Zeichen-Heuristik (~4 Zeichen/Token)
+geprüft — modellagnostisch und ohne Download. Für exakte Budgets:
+`RAG_TOKENIZER_BACKEND=hf` zählt mit dem HuggingFace-Tokenizer des
+Dense-Embedding-Modells (überschreibbar via `RAG_TOKENIZER_MODEL`). Fail-closed:
+Lädt der konfigurierte Tokenizer nicht (z. B. air-gapped ohne vorbefüllten
+HF-Cache), wirft die Engine `ConfigurationError` statt still auf die Heuristik
+zurückzufallen.
+
+### Pflicht-Filter (z. B. Mandanten-Isolation)
+
+`RAG_REQUIRED_FILTER_KEYS='["tenant"]'` erzwingt, dass jeder `retrieve()`-Aufruf
+die genannten Schlüssel im `metadata_filter` setzt — fehlen sie, gibt es einen
+`ValueError` statt einer mandantenübergreifenden Trefferliste. Damit wird die
+Filter-Konvention der Host-Applikation erzwingbar statt vertrauensbasiert.
+
 ### Robustheit
 
 Alle externen Aufrufe (Qdrant, optionale APIs) laufen über Exponential Backoff
@@ -172,9 +189,34 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+Liegt der Inhalt bereits als String vor (z. B. aus einer API oder Datenbank),
+übernimmt `ingest_text` denselben Ablauf ohne Datei — inklusive Versionierung
+über `metadata["document_id"]` (`pdf` ist ausgenommen, da binär):
+
+```python
+await rag.ingest_text(
+    "# Handbuch\n\n…",
+    document_type="markdown",
+    metadata={"document_id": "handbuch", "tenant": "acme"},
+    source_name="handbuch.md",
+)
+```
+
 Für Tests/lokale Entwicklung ohne Server: `QdrantVectorStore(url=":memory:", ...)`
-startet eine eingebettete Qdrant-Instanz. Der komplette Offline-E2E-Test läuft mit
-`python tests/test_offline_e2e.py` (keine API-Keys nötig).
+startet eine eingebettete Qdrant-Instanz.
+
+## Tests & CI
+
+```bash
+pip install -e .[dev]
+ruff check rag_module tests   # Lint
+pytest                        # Offline-Suite (Hash-Embedder + In-Memory-Qdrant, keine Downloads)
+python tests/test_offline_e2e.py   # Ausführliches Standalone-E2E-Skript
+```
+
+Der GitHub-Actions-Workflow (`.github/workflows/ci.yml`) führt Lint, die
+pytest-Suite und das Offline-E2E-Skript bei jedem Push/PR aus — vollständig
+offline, ohne API-Keys.
 
 ## Erweiterungspunkte (Dependency Injection)
 

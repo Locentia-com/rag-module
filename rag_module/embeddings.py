@@ -11,7 +11,8 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from typing import Any, Optional, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 from .exceptions import ConfigurationError, EmbeddingError
 from .models import SparseVector
@@ -87,7 +88,7 @@ class FastEmbedDenseEmbedder(BaseDenseEmbedder):
         self,
         *,
         model_name: str = "intfloat/multilingual-e5-large",
-        dimension: Optional[int] = None,
+        dimension: int | None = None,
         batch_size: int = 32,
     ) -> None:
         self._model_name = model_name
@@ -180,7 +181,7 @@ class CohereDenseEmbedder(BaseDenseEmbedder):
         *,
         api_key: str,
         model: str = "embed-multilingual-v3.0",
-        dimension: Optional[int] = None,
+        dimension: int | None = None,
         batch_size: int = 96,
         concurrency: int = 4,
         timeout_s: float = 60.0,
