@@ -33,10 +33,10 @@ from .exceptions import ChunkingError, DocumentLoadError
 from .models import Chunk, ChunkRole, ChunkType, DocumentType
 from .utils import (
     CHARS_PER_TOKEN,
-    HeuristicTokenCounter,
-    HFTokenCounter,
     configure_token_counter,
     estimate_tokens,
+    heuristic_token_count,
+    hf_token_counter,
 )
 
 logger = logging.getLogger(__name__)
@@ -1394,12 +1394,11 @@ class ChunkingEngine:
         # Token-Zählung aus den Settings konfigurieren (prozessweit; siehe
         # Hinweis an utils._active_token_counter). Fail-closed: Ein explizit
         # konfigurierter HF-Tokenizer, der nicht lädt, ist ein Setup-Fehler.
-        if settings.tokenizer_backend == "hf":
-            configure_token_counter(
-                HFTokenCounter(settings.tokenizer_model or settings.fastembed_dense_model)
-            )
-        else:
-            configure_token_counter(HeuristicTokenCounter())
+        configure_token_counter(
+            hf_token_counter(settings.tokenizer_model or settings.fastembed_dense_model)
+            if settings.tokenizer_backend == "hf"
+            else heuristic_token_count
+        )
         common = dict(
             max_tokens=settings.chunk_max_tokens,
             overlap_tokens=settings.chunk_overlap_tokens,
@@ -1448,13 +1447,13 @@ class ChunkingEngine:
                 "PDF-Inhalte können nicht als Text gechunkt werden — "
                 "chunk_file/ingest_document mit dem Dateipfad verwenden."
             )
-        chunker = self._select_chunker(document_type)
-        chunks = chunker.chunk(content, source_name=source_name)
+        chunks = self._select_chunker(document_type).chunk(content, source_name=source_name)
+        return self._finalize(chunks, source_name or "inline-Text")
+
+    def _finalize(self, chunks: list[Chunk], source_name: str) -> list[Chunk]:
         chunks = self._post_process(chunks)
         if not chunks:
-            raise ChunkingError(
-                f"Aus '{source_name or 'inline-Text'}' konnten keine Chunks erzeugt werden."
-            )
+            raise ChunkingError(f"Aus '{source_name}' konnten keine Chunks erzeugt werden.")
         return chunks
 
     def chunk_file_sync(
@@ -1499,12 +1498,7 @@ class ChunkingEngine:
                         extra={"page": table.page, "isolated_structure": True},
                     )
                 )
-            chunks = self._post_process(chunks)
-            if not chunks:
-                raise ChunkingError(
-                    f"Aus '{path.name}' konnten keine Chunks erzeugt werden."
-                )
-            return chunks
+            return self._finalize(chunks, path.name)
 
         content = self._read_text(path)
         return self.chunk_text_sync(content, document_type, source_name=path.name)

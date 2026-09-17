@@ -66,13 +66,6 @@ from .retrieval import (
     reciprocal_rank_fusion,
 )
 from .service import AdvancedRAGModule
-from .utils import (
-    BaseTokenCounter,
-    HeuristicTokenCounter,
-    HFTokenCounter,
-    configure_token_counter,
-    estimate_tokens,
-)
 from .vector_store import BaseVectorStore, ChunkPoint, QdrantVectorStore
 
 __version__ = "1.1.0"
@@ -89,7 +82,6 @@ __all__ = [
     "BaseLLMClient",
     "BaseReranker",
     "BaseSparseEmbedder",
-    "BaseTokenCounter",
     "BaseVectorStore",
     "Chunk",
     "ChunkPoint",
@@ -108,8 +100,6 @@ __all__ = [
     "FastEmbedDenseEmbedder",
     "FastEmbedReranker",
     "FusedCandidate",
-    "HFTokenCounter",
-    "HeuristicTokenCounter",
     "JSONChunker",
     "LegalChunker",
     "MarkdownChunker",
@@ -130,8 +120,6 @@ __all__ = [
     "TemporalFilter",
     "VectorStoreConnectionError",
     "VectorStoreError",
-    "configure_token_counter",
-    "estimate_tokens",
     "reciprocal_rank_fusion",
     "split_text",
 ]

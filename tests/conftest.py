@@ -14,7 +14,7 @@ import pytest
 from rag_module import AdvancedRAGModule, RAGSettings
 from rag_module.embeddings import BaseDenseEmbedder, BaseSparseEmbedder
 from rag_module.models import SparseVector
-from rag_module.utils import HeuristicTokenCounter, configure_token_counter
+from rag_module.utils import configure_token_counter, heuristic_token_count
 from rag_module.vector_store import QdrantVectorStore
 
 _DIMENSION = 64
@@ -81,7 +81,7 @@ class HashSparseEmbedder(BaseSparseEmbedder):
 @pytest.fixture(autouse=True)
 def _reset_token_counter() -> None:
     """Jeder Test startet mit der Heuristik (Modul-Global sauber halten)."""
-    configure_token_counter(HeuristicTokenCounter())
+    configure_token_counter(heuristic_token_count)
 
 
 @pytest.fixture
@@ -94,20 +94,16 @@ def offline_settings() -> RAGSettings:
     )
 
 
-def build_offline_module(settings: RAGSettings) -> AdvancedRAGModule:
-    return AdvancedRAGModule(
-        settings=settings,
+@pytest.fixture
+async def offline_module(offline_settings: RAGSettings) -> AdvancedRAGModule:
+    module = AdvancedRAGModule(
+        settings=offline_settings,
         vector_store=QdrantVectorStore(
-            url=":memory:", collection_name=settings.collection_name
+            url=":memory:", collection_name=offline_settings.collection_name
         ),
         dense_embedder=HashDenseEmbedder(),
         sparse_embedder=HashSparseEmbedder(),
         reranker=None,
     )
-
-
-@pytest.fixture
-async def offline_module(offline_settings: RAGSettings) -> AdvancedRAGModule:
-    module = build_offline_module(offline_settings)
     yield module
     await module.close()

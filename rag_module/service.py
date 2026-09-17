@@ -336,15 +336,9 @@ class AdvancedRAGModule:
 
         metadata = dict(metadata or {})
         dtype = DocumentType.from_raw(document_type)
-        if dtype is DocumentType.PDF:
-            raise ValueError(
-                "PDF kann nur über ingest_document(file_path=...) ingestiert werden."
-            )
-        document_id = str(metadata.pop("document_id", "") or "").strip()
-        if not document_id:
-            document_id = (
-                _derive_document_id(source_name) if source_name.strip() else uuid.uuid4().hex
-            )
+        document_id = str(metadata.pop("document_id", "") or "").strip() or (
+            _derive_document_id(source_name) if source_name.strip() else uuid.uuid4().hex
+        )
         _validate_metadata_serializable(metadata)
 
         chunks = await self._chunking.chunk_text(content, dtype, source_name=source_name)
@@ -516,10 +510,9 @@ class AdvancedRAGModule:
             raise ValueError("query darf nicht leer sein.")
         if limit < 1:
             raise ValueError("limit muss >= 1 sein.")
+        given = metadata_filter or {}
         missing_required_keys = [
-            key
-            for key in self._settings.required_filter_keys
-            if metadata_filter is None or metadata_filter.get(key) is None
+            key for key in self._settings.required_filter_keys if given.get(key) is None
         ]
         if missing_required_keys:
             raise ValueError(

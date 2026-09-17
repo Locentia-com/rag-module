@@ -48,12 +48,3 @@ def test_chunk_text_sequences_are_contiguous(engine: ChunkingEngine) -> None:
     )
     chunks = engine.chunk_text_sync(content, DocumentType.MARKDOWN)
     assert [chunk.sequence for chunk in chunks] == list(range(len(chunks)))
-
-
-async def test_chunk_text_async_wrapper(engine: ChunkingEngine) -> None:
-    chunks = await engine.chunk_text(
-        "Ein einfacher Absatz mit genug Inhalt für einen Chunk.",
-        DocumentType.TEXT,
-        source_name="a.txt",
-    )
-    assert chunks

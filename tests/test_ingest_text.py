@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from rag_module.exceptions import ChunkingError
+
 
 async def test_ingest_text_roundtrip(offline_module) -> None:
     document_id = await offline_module.ingest_text(
@@ -73,7 +75,7 @@ async def test_ingest_text_without_id_or_source_gets_random_id(offline_module) -
 
 
 async def test_ingest_text_rejects_pdf(offline_module) -> None:
-    with pytest.raises(ValueError, match="PDF"):
+    with pytest.raises(ChunkingError, match="PDF"):
         await offline_module.ingest_text(
             "irrelevant", document_type="pdf", metadata={}
         )
